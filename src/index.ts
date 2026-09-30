@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { config as loadEnv } from 'dotenv';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
@@ -8,6 +11,11 @@ import { z } from 'zod/v4';
 import { TrelloClient } from './trello-client.js';
 import { TrelloHealthEndpoints, HealthEndpointSchemas } from './health/health-endpoints.js';
 import { formatCardListResponse } from './card-list-preview.js';
+
+// Load from the package's own .env regardless of the MCP client's cwd, so the
+// same credentials work whether launched by Claude, Codex, or any other client.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: join(__dirname, '../.env') });
 
 class TrelloServer {
   private server: McpServer;
@@ -516,6 +524,54 @@ class TrelloServer {
           const list = await this.trelloClient.updateListPosition(listId, parsedPosition);
           return {
             content: [{ type: 'text' as const, text: JSON.stringify(list, null, 2) }],
+          };
+        } catch (error) {
+          return this.handleError(error);
+        }
+      }
+    );
+
+    // Search cards across Trello (global search via /search endpoint)
+    this.server.registerTool(
+      'search_cards',
+      {
+        title: 'Search Cards',
+        description:
+          'Search Trello cards by text in name, description, or comments. Scopes to the active board by default; pass boardId to search a specific board, or omit and clear the active board to search across all accessible boards. Returns matching cards (id, name, desc, due, list, labels, url).',
+        inputSchema: {
+          query: z.string().min(1).describe('Text to search for in card names, descriptions, or comments'),
+          boardId: z
+            .string()
+            .optional()
+            .describe(
+              'ID of the board to scope the search to. If omitted, uses the active board if one is set; otherwise searches all accessible boards.'
+            ),
+          limit: z
+            .number()
+            .int()
+            .min(1)
+            .max(100)
+            .optional()
+            .describe('Maximum number of cards to return (default: 50, max: 100)'),
+        },
+      },
+      async ({ query, boardId, limit }) => {
+        try {
+          const cards = await this.trelloClient.searchCards(query, {
+            boardId,
+            cardsLimit: limit,
+          });
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: JSON.stringify(
+                  { count: cards.length, query, cards },
+                  null,
+                  2
+                ),
+              },
+            ],
           };
         } catch (error) {
           return this.handleError(error);

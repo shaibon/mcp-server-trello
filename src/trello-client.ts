@@ -351,6 +351,45 @@ export class TrelloClient {
     });
   }
 
+  /**
+   * Search cards across Trello using the /search endpoint.
+   * Queries card names, descriptions, and comments. Optionally scope to a board.
+   * Returns hydrated cards (id, name, desc, due, idList, idLabels, closed, url).
+   */
+  async searchCards(
+    query: string,
+    options?: {
+      boardId?: string;
+      idOrganizations?: string;
+      cardList?: boolean;
+      cardBoard?: boolean;
+      cardsLimit?: number;
+    }
+  ): Promise<TrelloCard[]> {
+    return this.handleRequest(async () => {
+      const trimmed = query.trim();
+      if (!trimmed) {
+        throw new McpError(ErrorCode.InvalidParams, 'Search query must not be empty');
+      }
+      const params: Record<string, string | number | boolean> = {
+        query: trimmed,
+        modelTypes: 'cards',
+        cards_limit: options?.cardsLimit ?? 50,
+      };
+      // Scope to active board if no explicit boardId is provided but one is active
+      const effectiveBoardId = options?.boardId || this.activeConfig.boardId || this.defaultBoardId;
+      if (effectiveBoardId) {
+        params.idBoards = effectiveBoardId;
+      }
+      if (options?.idOrganizations) {
+        params.idOrganizations = options.idOrganizations;
+      }
+      const response = await this.axiosInstance.get('/search', { params });
+      const cards: TrelloCard[] = response.data?.cards ?? [];
+      return cards;
+    });
+  }
+
   async getLists(boardId?: string): Promise<TrelloList[]> {
     const effectiveBoardId = boardId || this.activeConfig.boardId || this.defaultBoardId;
     if (!effectiveBoardId) {
